@@ -4,7 +4,10 @@ import {
   analysisVideoUrl, markAnalysisImpact,
 } from "../api";
 import { ChatPanel } from "./ChatPanel";
-import type { VideoMeta, AnalysisSummary, ConversationMeta, StanceMetrics, Insights } from "../types";
+import type {
+  VideoMeta, AnalysisSummary, ConversationMeta,
+  StanceMetrics, Insights, ShotSegmentation, FrameConfidence,
+} from "../types";
 
 interface Props {
   videoId: string;
@@ -298,7 +301,11 @@ function AnalysisPanel({
           </div>
           <div className="bg-gray-100 dark:bg-gray-900 rounded-b-xl rounded-tr-xl p-4 overflow-y-auto" style={{ maxHeight: "60vh" }}>
             {tab === "metrics" && analysis.analysis && (
-              <MetricsPanel analysis={analysis.analysis} />
+              <MetricsPanel
+                analysis={analysis.analysis}
+                segmentation={analysis.segmentation}
+                confidence={analysis.confidence}
+              />
             )}
             {tab === "ai" && (
               <AIPanel
@@ -316,7 +323,19 @@ function AnalysisPanel({
 
 // ── Metrics ───────────────────────────────────────────────────────────────────
 
-function MetricsPanel({ analysis }: { analysis: StanceMetrics }) {
+function fmt(ts: number): string {
+  const s = Math.floor(ts);
+  const ms = Math.round((ts - s) * 10);
+  return `${s}.${ms}s`;
+}
+
+function MetricsPanel({
+  analysis, segmentation, confidence,
+}: {
+  analysis: StanceMetrics;
+  segmentation?: ShotSegmentation;
+  confidence?: FrameConfidence[];
+}) {
   const rows = [
     { label: "Stance Width",              value: analysis.stance_width_normalized,  unit: "× shoulder" },
     { label: "Head Stillness (variance)", value: analysis.head_stillness_variance,  unit: "px²" },
@@ -327,20 +346,153 @@ function MetricsPanel({ analysis }: { analysis: StanceMetrics }) {
   ];
 
   return (
-    <div className="space-y-3">
-      <h3 className="font-semibold text-gray-800 dark:text-gray-200 text-sm">Biomechanical Metrics</h3>
-      {rows.map(({ label, value, unit }) => (
-        <div key={label} className="border-b border-gray-200 dark:border-gray-800 pb-2 last:border-0">
-          <div className="flex justify-between items-baseline gap-2">
-            <span className="text-sm text-gray-500 shrink-0">{label}</span>
-            <span className="font-mono text-sm text-right text-gray-800 dark:text-gray-200">
-              {value !== null && value !== undefined
-                ? `${typeof value === "number" ? value.toFixed(2) : value}${unit ? " " + unit : ""}`
-                : <span className="text-gray-400 dark:text-gray-600">—</span>}
-            </span>
+    <div className="space-y-4">
+      {/* Shot segmentation */}
+      {segmentation && (
+        <div>
+          <h3 className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-2">Shot Window</h3>
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-transparent rounded-lg p-3 space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Start</span>
+              <span className="font-mono text-gray-800 dark:text-gray-200">
+                f{segmentation.shot_start_frame} · {fmt(segmentation.shot_start_ts)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Peak backlift</span>
+              <span className="font-mono text-gray-800 dark:text-gray-200">
+                f{segmentation.peak_frame} · {fmt(segmentation.peak_ts)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">End</span>
+              <span className="font-mono text-gray-800 dark:text-gray-200">
+                f{segmentation.shot_end_frame} · {fmt(segmentation.shot_end_ts)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Duration</span>
+              <span className="font-mono text-gray-800 dark:text-gray-200">
+                {(segmentation.shot_end_ts - segmentation.shot_start_ts).toFixed(2)}s
+              </span>
+            </div>
+            {segmentation.method === "fallback_full_clip" && (
+              <p className="text-xs text-yellow-600 dark:text-yellow-400 pt-1">
+                ⚠ Boundary detection inconclusive — using full clip
+              </p>
+            )}
           </div>
         </div>
-      ))}
+      )}
+
+      {/* Confidence heatmap */}
+      {confidence && confidence.length > 0 && (
+        <div>
+          <h3 className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">
+            Pose Confidence
+          </h3>
+          <ConfidenceHeatmap data={confidence} segmentation={segmentation} />
+        </div>
+      )}
+
+      {/* Metrics */}
+      <div>
+        <h3 className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-2">
+          Biomechanical Metrics
+          {segmentation && segmentation.method !== "fallback_full_clip" && (
+            <span className="ml-2 text-xs font-normal text-pitch-500">
+              (computed on shot window)
+            </span>
+          )}
+        </h3>
+        <div className="space-y-3">
+          {rows.map(({ label, value, unit }) => (
+            <div key={label} className="border-b border-gray-200 dark:border-gray-800 pb-2 last:border-0">
+              <div className="flex justify-between items-baseline gap-2">
+                <span className="text-sm text-gray-500 shrink-0">{label}</span>
+                <span className="font-mono text-sm text-right text-gray-800 dark:text-gray-200">
+                  {value !== null && value !== undefined
+                    ? `${typeof value === "number" ? value.toFixed(2) : value}${unit ? " " + unit : ""}`
+                    : <span className="text-gray-400 dark:text-gray-600">—</span>}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Confidence heatmap ────────────────────────────────────────────────────────
+
+function confidenceColor(c: number, detected: boolean): string {
+  if (!detected || c === 0) return "#374151";           // gray-700
+  if (c >= 0.7) return "#22c55e";                      // green
+  if (c >= 0.4) return "#eab308";                      // yellow
+  return "#ef4444";                                    // red
+}
+
+function ConfidenceHeatmap({
+  data, segmentation,
+}: {
+  data: FrameConfidence[];
+  segmentation?: ShotSegmentation;
+}) {
+  if (!data.length) return null;
+
+  const totalTs = data[data.length - 1].ts || 1;
+  const startFrac = segmentation ? segmentation.shot_start_ts / totalTs : null;
+  const endFrac   = segmentation ? segmentation.shot_end_ts   / totalTs : null;
+
+  // Mean confidence summary
+  const detected = data.filter(d => d.detected);
+  const avgConf  = detected.length
+    ? detected.reduce((s, d) => s + d.confidence, 0) / detected.length
+    : 0;
+  const detectedPct = Math.round((detected.length / data.length) * 100);
+
+  return (
+    <div className="space-y-1">
+      {/* Bar strip */}
+      <div className="relative h-6 w-full rounded overflow-hidden flex">
+        {data.map((d, i) => (
+          <div
+            key={i}
+            style={{
+              flex: 1,
+              backgroundColor: confidenceColor(d.confidence, d.detected),
+              minWidth: 1,
+            }}
+            title={`f${d.frame} (${d.ts.toFixed(2)}s): ${d.detected ? `${(d.confidence * 100).toFixed(0)}%` : "no detection"}`}
+          />
+        ))}
+        {/* Shot window overlay */}
+        {startFrac !== null && endFrac !== null && (
+          <>
+            <div className="absolute top-0 bottom-0 border-l-2 border-white/70"
+                 style={{ left: `${startFrac * 100}%` }} />
+            <div className="absolute top-0 bottom-0 border-r-2 border-white/70"
+                 style={{ left: `${endFrac * 100}%` }} />
+          </>
+        )}
+      </div>
+
+      {/* Legend + summary */}
+      <div className="flex items-center gap-3 text-xs text-gray-500">
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-500" /> ≥70%
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-400" /> 40–70%
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-500" /> &lt;40%
+        </span>
+        <span className="ml-auto">
+          avg {(avgConf * 100).toFixed(0)}% · {detectedPct}% detected
+        </span>
+      </div>
     </div>
   );
 }

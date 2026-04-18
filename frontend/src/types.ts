@@ -56,6 +56,23 @@ export interface JobResponse {
 
 // ── Library types ─────────────────────────────────────────────────────────────
 
+export interface ShotSegmentation {
+  shot_start_frame: number;
+  shot_end_frame: number;
+  shot_start_ts: number;
+  shot_end_ts: number;
+  peak_frame: number;
+  peak_ts: number;
+  method: string;
+}
+
+export interface FrameConfidence {
+  frame: number;
+  ts: number;
+  confidence: number;
+  detected: boolean;
+}
+
 export interface AnalysisSummary {
   analysis_id: string;
   stage: Stage;
@@ -66,6 +83,8 @@ export interface AnalysisSummary {
   error?: string;
   analysis?: StanceMetrics;
   insights?: Insights;
+  segmentation?: ShotSegmentation;
+  confidence?: FrameConfidence[];
   llm_enabled?: boolean;
 }
 

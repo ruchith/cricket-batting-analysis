@@ -32,7 +32,12 @@ def _dist(a: tuple, b: tuple) -> float:
     return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 
-def compute_metrics(kp_path: Path, impact_frame: int | None = None) -> dict:
+def compute_metrics(
+    kp_path: Path,
+    impact_frame: int | None = None,
+    shot_start: int | None = None,
+    shot_end: int | None = None,
+) -> dict:
     frames = _load_keypoints(kp_path)
     if not frames:
         return {}
@@ -41,8 +46,25 @@ def compute_metrics(kp_path: Path, impact_frame: int | None = None) -> dict:
     if not detected:
         return {}
 
-    # ── Stance width (average over first 10% of detected frames)
-    stance_frames = detected[: max(1, len(detected) // 10)]
+    # Frames strictly before shot start = stance / pre-shot period
+    if shot_start is not None and shot_start > 5:
+        pre_shot = [f for f in detected if f["frame_index"] < shot_start]
+    else:
+        pre_shot = []
+
+    # Frames within shot window = backlift through follow-through
+    if shot_start is not None and shot_end is not None:
+        shot_frames = [f for f in detected
+                       if shot_start <= f["frame_index"] <= shot_end]
+    else:
+        shot_frames = detected
+
+    # Fall back to full detected set when segments are too thin
+    stance_pool = pre_shot if len(pre_shot) >= 5 else detected
+    action_pool = shot_frames if len(shot_frames) >= 5 else detected
+
+    # ── Stance width (average over pre-shot period or first 10% fallback)
+    stance_frames = stance_pool if pre_shot else detected[: max(1, len(detected) // 10)]
     stance_widths: list[float] = []
     shoulder_widths: list[float] = []
     for f in stance_frames:
@@ -58,8 +80,8 @@ def compute_metrics(kp_path: Path, impact_frame: int | None = None) -> dict:
 
     stance_width_normalized = float(np.mean(stance_widths)) if stance_widths else None
 
-    # ── Head stillness (nose Y variance in first 20% of detected frames)
-    head_frames = detected[: max(1, len(detected) // 5)]
+    # ── Head stillness (nose Y variance in pre-shot period or first 20% fallback)
+    head_frames = stance_pool if pre_shot else detected[: max(1, len(detected) // 5)]
     nose_ys = []
     for f in head_frames:
         n = _pt(f["keypoints"], "nose")
@@ -67,10 +89,9 @@ def compute_metrics(kp_path: Path, impact_frame: int | None = None) -> dict:
             nose_ys.append(n[1])
     head_stillness_variance = float(np.var(nose_ys)) if len(nose_ys) > 2 else None
 
-    # ── Backlift peak height: max(wrist_y - shoulder_y) — lower y = higher in frame
-    # We use the wrist that goes highest (right wrist for right-handed batter)
+    # ── Backlift peak height: max(wrist_y - shoulder_y) within shot window
     backlift_vals: list[float] = []
-    for f in detected:
+    for f in action_pool:
         kp = f["keypoints"]
         for wrist_name in ("right_wrist", "left_wrist"):
             for shoulder_name in ("right_shoulder", "left_shoulder"):
@@ -83,17 +104,15 @@ def compute_metrics(kp_path: Path, impact_frame: int | None = None) -> dict:
 
     backlift_peak_height = float(max(backlift_vals)) if backlift_vals else None
 
-    # ── Front-foot stride length: displacement of lead ankle from stance to peak
-    # Lead foot is the one that moves toward the pitch (lower y in top-down is further)
-    # We measure max displacement of whichever ankle moves the most
-    if len(detected) > 5:
-        early_kp = detected[0]["keypoints"]
+    # ── Front-foot stride length: displacement within shot window
+    if len(action_pool) > 5:
+        early_kp = action_pool[0]["keypoints"]
         la0 = _pt(early_kp, "left_ankle")
         ra0 = _pt(early_kp, "right_ankle")
         max_stride = 0.0
         ref_shoulder_w = shoulder_widths[0] if shoulder_widths else 100.0
 
-        for f in detected[1:]:
+        for f in action_pool[1:]:
             kp = f["keypoints"]
             la = _pt(kp, "left_ankle")
             ra = _pt(kp, "right_ankle")

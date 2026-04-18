@@ -105,6 +105,16 @@ def get_analysis(video_id: str, analysis_id: str) -> dict | None:
         raw = json.loads(inf.read_text())
         insights_data = raw if raw else None
 
+    segmentation_data = None
+    seg_f = adir / "segmentation.json"
+    if seg_f.exists():
+        segmentation_data = json.loads(seg_f.read_text())
+
+    confidence_data = None
+    conf_f = adir / "confidence.json"
+    if conf_f.exists():
+        confidence_data = json.loads(conf_f.read_text())
+
     return {
         "analysis_id": analysis_id,
         "stage": status.get("stage"),
@@ -113,6 +123,8 @@ def get_analysis(video_id: str, analysis_id: str) -> dict | None:
         "error": status.get("error"),
         "analysis": analysis_data,
         "insights": insights_data,
+        "segmentation": segmentation_data,
+        "confidence": confidence_data,
         "has_annotated_video": (adir / "annotated.mp4").exists(),
         "has_llm_insights": bool(insights_data),
     }

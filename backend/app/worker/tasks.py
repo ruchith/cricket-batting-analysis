@@ -73,17 +73,35 @@ async def process_video(ctx: dict, job_id: str, upload_path: str,
         kp_path = await pose.run(job_dir, video)
         log.info("[%s] Pose complete", job_id)
 
-        # ── Stage 4: Metrics
+        # ── Stage 4a: Shot segmentation
+        from app.pipeline.segmentation import detect_shot_boundaries
+        seg = detect_shot_boundaries(kp_path)
+        (job_dir / "segmentation.json").write_text(json.dumps(seg, indent=2))
+        log.info("[%s] Segmentation: %s", job_id, seg)
+
+        # ── Stage 4b: Per-frame confidence
+        from app.pipeline.confidence import compute_confidence
+        conf_data = compute_confidence(kp_path)
+        conf_path = job_dir / "confidence.json"
+        conf_path.write_text(json.dumps(conf_data))
+        log.info("[%s] Confidence: %d data points", job_id, len(conf_data))
+
+        # ── Stage 4c: Metrics (uses shot boundaries for accuracy)
         _write_status(job_dir, Stage.metrics, 0.65)
         from app.pipeline.metrics import compute_metrics
-        analysis = compute_metrics(kp_path)
+        analysis = compute_metrics(
+            kp_path,
+            shot_start=seg.get("shot_start_frame"),
+            shot_end=seg.get("shot_end_frame"),
+        )
         (job_dir / "analysis.json").write_text(json.dumps(analysis, indent=2))
         log.info("[%s] Metrics complete: %s", job_id, analysis)
 
-        # ── Stage 5: Render
+        # ── Stage 5: Render (confidence-colored skeleton + shot labels)
         _write_status(job_dir, Stage.render, 0.75)
         from app.pipeline import render
-        await render.run(job_dir, video, kp_path)
+        await render.run(job_dir, video, kp_path,
+                         confidence_path=conf_path, segmentation=seg)
         log.info("[%s] Render complete", job_id)
 
         # ── Stage 6: LLM insights
