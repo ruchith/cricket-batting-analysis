@@ -322,8 +322,10 @@ def generate_report(
     /* ── Photo strip ── */
     .photo-strip {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 175px));
+      justify-content: start;
+      align-items: start;
+      gap: 0.75rem;
     }}
     .photo-card {{
       background: white;
@@ -333,10 +335,17 @@ def generate_report(
     }}
     .photo-card img {{
       width: 100%;
-      aspect-ratio: 16/9;
+      height: 230px;
       object-fit: cover;
       display: block;
       background: #0f172a;
+    }}
+    @media (max-width: 500px) {{
+      .photo-strip {{
+        grid-template-columns: repeat(2, 1fr);
+        justify-content: stretch;
+      }}
+      .photo-card img {{ height: 200px; }}
     }}
     .photo-label {{
       font-size: 0.7rem;
