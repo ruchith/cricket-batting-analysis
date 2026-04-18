@@ -1,9 +1,10 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "tailwindcss";
+import autoprefixer from "autoprefixer";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-// Load root .env for ports
 function loadRootEnv() {
   try {
     const raw = readFileSync(resolve(__dirname, "../.env"), "utf-8");
@@ -23,12 +24,37 @@ function loadRootEnv() {
   }
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(() => {
   const rootEnv = loadRootEnv();
   const backendPort = rootEnv.BACKEND_PORT ?? process.env.BACKEND_PORT ?? "8082";
 
   return {
     plugins: [react()],
+    css: {
+      postcss: {
+        plugins: [
+          tailwindcss({
+            darkMode: "class",
+            content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+            theme: {
+              extend: {
+                colors: {
+                  pitch: {
+                    50: "#f0fdf4",
+                    100: "#dcfce7",
+                    500: "#22c55e",
+                    700: "#15803d",
+                    900: "#14532d",
+                  },
+                },
+              },
+            },
+            plugins: [],
+          }),
+          autoprefixer(),
+        ],
+      },
+    },
     server: {
       proxy: {
         "/api": {
