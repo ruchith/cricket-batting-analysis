@@ -33,7 +33,8 @@ def _write_status(job_dir: Path, stage: Stage, progress: float,
 async def process_video(ctx: dict, job_id: str, upload_path: str,
                         video_id: str | None = None,
                         analysis_id: str | None = None,
-                        corrections: dict | None = None) -> None:
+                        corrections: dict | None = None,
+                        chat_context: str | None = None) -> None:
     """
     Main pipeline task.
     If video_id + analysis_id are provided, write to library structure.
@@ -108,7 +109,8 @@ async def process_video(ctx: dict, job_id: str, upload_path: str,
         _write_status(job_dir, Stage.llm, 0.88)
         if ANTHROPIC_API_KEY:
             await _run_llm_stage(job_id, job_dir, analysis, kp_path, video,
-                                 corrections=corrections or {})
+                                 corrections=corrections or {},
+                                 chat_context=chat_context)
         else:
             log.info("[%s] Skipping LLM stage (no ANTHROPIC_API_KEY)", job_id)
             (job_dir / "insights.json").write_text(json.dumps({}))
@@ -126,15 +128,20 @@ async def process_video(ctx: dict, job_id: str, upload_path: str,
 
 async def _run_llm_stage(job_id: str, job_dir: Path, analysis: dict,
                          kp_path: Path, video_path: Path,
-                         corrections: dict | None = None) -> None:
+                         corrections: dict | None = None,
+                         chat_context: str | None = None) -> None:
     from app.pipeline import llm_client
     from app.pipeline.metrics import build_pose_summary
 
     insights: dict = {}
     corrections = corrections or {}
 
+    if chat_context:
+        log.info("[%s] Chat context included (%d chars)", job_id, len(chat_context))
+
     # Coaching feedback via Haiku
-    feedback = llm_client.generate_coaching_feedback(job_dir, analysis)
+    feedback = llm_client.generate_coaching_feedback(job_dir, analysis,
+                                                     chat_context=chat_context)
     if feedback:
         insights["coaching_feedback"] = feedback
 
@@ -148,7 +155,8 @@ async def _run_llm_stage(job_id: str, job_dir: Path, analysis: dict,
         log.info("[%s] Shot type set from user correction: %s", job_id, corrections["shot_type"])
     else:
         pose_summary = build_pose_summary(kp_path)
-        shot = llm_client.classify_shot(job_dir, pose_summary)
+        shot = llm_client.classify_shot(job_dir, pose_summary,
+                                        chat_context=chat_context)
         if shot:
             insights["shot_classification"] = shot
 

@@ -52,15 +52,22 @@ def _call_with_retry(fn, *args, retries: int = 3, **kwargs):
             time.sleep(wait)
 
 
-def generate_coaching_feedback(job_dir: Path, metrics: dict) -> dict | None:
+def generate_coaching_feedback(
+    job_dir: Path, metrics: dict, chat_context: str | None = None
+) -> dict | None:
     client = _get_client()
     if not client:
         return None
 
+    context_block = (
+        f"\nPREVIOUS USER FEEDBACK (from chat — treat as ground truth):\n{chat_context}\n"
+        if chat_context else ""
+    )
+
     prompt = f"""You are an expert cricket batting coach. Below are biomechanical metrics
 computed from a video analysis. Provide coaching feedback STRICTLY based on these numbers.
 Do NOT invent measurements or reference values not provided below.
-
+{context_block}
 METRICS:
 {json.dumps(metrics, indent=2)}
 
@@ -71,7 +78,8 @@ Respond with valid JSON matching this exact schema:
   "drills": ["<drill 1>", ...]
 }}
 
-Use 2-4 items per list. Be specific and actionable. Mention the actual metric values."""
+Use 2-4 items per list. Be specific and actionable. Mention the actual metric values.
+If previous user feedback contradicts or refines the metrics, prioritise the user's account."""
 
     try:
         response = _call_with_retry(
@@ -95,17 +103,24 @@ Use 2-4 items per list. Be specific and actionable. Mention the actual metric va
         return None
 
 
-def classify_shot(job_dir: Path, pose_summary: str) -> dict | None:
+def classify_shot(
+    job_dir: Path, pose_summary: str, chat_context: str | None = None
+) -> dict | None:
     client = _get_client()
     if not client:
         return None
 
+    context_block = (
+        f"\nPREVIOUS USER FEEDBACK (treat any shot-type correction as authoritative):\n{chat_context}\n"
+        if chat_context else ""
+    )
+
     prompt = f"""You are an expert cricket analyst. Below is a summary of a batter's
 pose trajectory at 10 key frames (joint angles in degrees).
-
+{context_block}
 {pose_summary}
 
-Based purely on the pose kinematics, classify the shot being played.
+Based on the pose kinematics (and any user correction above), classify the shot being played.
 Choose from: cover drive, straight drive, on drive, pull shot, hook shot, cut shot,
 sweep shot, defensive push, forward defensive, backward defensive, flick, glance.
 

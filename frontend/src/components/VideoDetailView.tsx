@@ -24,6 +24,8 @@ export function VideoDetailView({ videoId, initialAnalysisId, onBack }: Props) {
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [rerunning, setRerunning] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showRerunPanel, setShowRerunPanel] = useState(false);
+  const [includeChatSummary, setIncludeChatSummary] = useState(true);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadVideo = useCallback(async () => {
@@ -69,10 +71,13 @@ export function VideoDetailView({ videoId, initialAnalysisId, onBack }: Props) {
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
   }, [selectedAnalysisId, loadAnalysis, loadVideo]);
 
-  const handleRerun = useCallback(async () => {
+  const handleRerun = useCallback(async (withChatSummary: boolean) => {
     setRerunning(true);
+    setShowRerunPanel(false);
     try {
-      const { analysis_id } = await rerunAnalysis(videoId);
+      const { analysis_id } = await rerunAnalysis(videoId, {
+        include_chat_summary: withChatSummary,
+      });
       await loadVideo();
       setSelectedAnalysisId(analysis_id);
     } finally {
@@ -143,7 +148,7 @@ export function VideoDetailView({ videoId, initialAnalysisId, onBack }: Props) {
         )}
 
         <button
-          onClick={handleRerun}
+          onClick={() => setShowRerunPanel(p => !p)}
           disabled={rerunning}
           className="px-3 py-1.5 text-xs bg-pitch-700 hover:bg-pitch-500 disabled:opacity-50 text-white rounded-lg transition-colors touch-manipulation"
         >
@@ -160,6 +165,17 @@ export function VideoDetailView({ videoId, initialAnalysisId, onBack }: Props) {
           </button>
         )}
       </div>
+
+      {/* Re-run confirmation panel */}
+      {showRerunPanel && (
+        <RerunPanel
+          totalMessages={conversations.reduce((s, c) => s + c.message_count, 0)}
+          includeChatSummary={includeChatSummary}
+          onToggle={() => setIncludeChatSummary(v => !v)}
+          onConfirm={() => handleRerun(includeChatSummary)}
+          onCancel={() => setShowRerunPanel(false)}
+        />
+      )}
 
       {/* Main content */}
       <div className="flex flex-col lg:flex-row gap-4">
@@ -197,6 +213,72 @@ export function VideoDetailView({ videoId, initialAnalysisId, onBack }: Props) {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Re-run confirmation panel ─────────────────────────────────────────────────
+
+function RerunPanel({
+  totalMessages, includeChatSummary, onToggle, onConfirm, onCancel,
+}: {
+  totalMessages: number;
+  includeChatSummary: boolean;
+  onToggle: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 rounded-xl px-4 py-3 flex flex-wrap items-center gap-4">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">Re-run Analysis</p>
+
+        <label className="flex items-start gap-2.5 cursor-pointer group">
+          <input
+            type="checkbox"
+            checked={includeChatSummary}
+            onChange={onToggle}
+            className="mt-0.5 accent-green-500 w-4 h-4 cursor-pointer"
+          />
+          <span className="text-sm text-gray-700 dark:text-gray-300">
+            Include chat feedback
+            {totalMessages > 0 ? (
+              <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-500">
+                ({totalMessages} {totalMessages === 1 ? "message" : "messages"} across{" "}
+                {/* conversation count shown via message total */"your conversations"})
+              </span>
+            ) : (
+              <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-500">(no messages yet)</span>
+            )}
+          </span>
+        </label>
+
+        {includeChatSummary && totalMessages > 0 && (
+          <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400 ml-6.5">
+            Claude will summarise your conversation and use it to inform coaching feedback and shot classification.
+          </p>
+        )}
+        {includeChatSummary && totalMessages === 0 && (
+          <p className="mt-1.5 text-xs text-gray-400 dark:text-gray-500 ml-6.5">
+            No messages found — analysis will run without chat context.
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-2 flex-shrink-0">
+        <button
+          onClick={onCancel}
+          className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg transition-colors touch-manipulation"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          className="px-3 py-1.5 text-xs bg-pitch-700 hover:bg-pitch-500 text-white rounded-lg transition-colors touch-manipulation"
+        >
+          Run Analysis
+        </button>
       </div>
     </div>
   );

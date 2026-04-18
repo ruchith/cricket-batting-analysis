@@ -87,12 +87,15 @@ export async function getAnalysis(videoId: string, analysisId: string): Promise<
 
 export async function rerunAnalysis(
   videoId: string,
-  corrections?: Record<string, string>
+  options?: { corrections?: Record<string, string>; include_chat_summary?: boolean }
 ): Promise<{ analysis_id: string }> {
   const r = await fetch(`${BASE}/videos/${videoId}/analyses`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ corrections: corrections ?? {} }),
+    body: JSON.stringify({
+      corrections: options?.corrections ?? {},
+      include_chat_summary: options?.include_chat_summary ?? true,
+    }),
   });
   if (!r.ok) throw new Error(`API error ${r.status}`);
   return r.json();

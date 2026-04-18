@@ -96,25 +96,39 @@ async def remove_video(video_id: str):
 
 # ── Analysis CRUD + re-run ────────────────────────────────────────────────────
 
+class RerunBody(BaseModel):
+    corrections: dict = {}
+    include_chat_summary: bool = True
+
+
 @router.post("/{video_id}/analyses")
-async def rerun_analysis(video_id: str, request: Request, body: dict = {}):
+async def rerun_analysis(video_id: str, request: Request, body: RerunBody = RerunBody()):
     _require_video(video_id)
 
-    # Find stored original
     candidates = list(video_dir(video_id).glob("original.*"))
     if not candidates:
         raise HTTPException(400, "No original video stored for this entry")
 
-    corrections = body.get("corrections", {})
+    chat_context: str | None = None
+    if body.include_chat_summary:
+        from app.pipeline.chat_summary import generate_chat_summary
+        chat_context = generate_chat_summary(video_id)
+        if chat_context:
+            log.info("Chat summary included for re-analysis of video %s", video_id)
+        else:
+            log.info("No chat summary available for video %s", video_id)
+
     analysis_id = create_analysis(video_id)
     pool = request.app.state.arq_pool
     job_id = str(uuid.uuid4())
     await pool.enqueue_job(
         "process_video", job_id, str(candidates[0]),
         video_id=video_id, analysis_id=analysis_id,
-        corrections=corrections,
+        corrections=body.corrections,
+        chat_context=chat_context,
     )
-    log.info("Re-analysis %s for video %s (corrections=%s)", analysis_id, video_id, corrections)
+    log.info("Re-analysis %s for video %s (corrections=%s, chat_context=%s)",
+             analysis_id, video_id, body.corrections, bool(chat_context))
     return {"analysis_id": analysis_id}
 
 
