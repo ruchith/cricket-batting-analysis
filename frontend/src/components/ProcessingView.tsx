@@ -8,20 +8,18 @@ interface Props {
 }
 
 const STAGES: { key: Stage; label: string; description: string }[] = [
-  { key: "ingest", label: "Ingest", description: "Saving upload" },
-  { key: "normalize", label: "Normalize", description: "Transcoding & fixing rotation" },
-  { key: "pose", label: "Pose Estimation", description: "Running MediaPipe on every frame" },
-  { key: "metrics", label: "Metrics", description: "Computing biomechanical measurements" },
-  { key: "render", label: "Render", description: "Burning skeleton overlay" },
-  { key: "llm", label: "AI Insights", description: "Claude coaching analysis" },
-  { key: "complete", label: "Done", description: "Ready to review" },
+  { key: "ingest",    label: "Ingest",          description: "Saving upload" },
+  { key: "normalize", label: "Normalize",        description: "Transcoding & fixing rotation" },
+  { key: "pose",      label: "Pose Estimation",  description: "Running MediaPipe on every frame" },
+  { key: "metrics",   label: "Metrics",          description: "Computing biomechanical measurements" },
+  { key: "render",    label: "Render",           description: "Burning skeleton overlay" },
+  { key: "llm",       label: "AI Insights",      description: "Claude coaching analysis" },
+  { key: "complete",  label: "Done",             description: "Ready to review" },
 ];
 
-const STAGE_ORDER: Stage[] = ["queued", "ingest", "normalize", "pose", "metrics", "render", "llm", "complete"];
+const STAGE_ORDER: Stage[] = ["queued","ingest","normalize","pose","metrics","render","llm","complete"];
 
-function stageIndex(s: Stage): number {
-  return STAGE_ORDER.indexOf(s);
-}
+function stageIndex(s: Stage) { return STAGE_ORDER.indexOf(s); }
 
 export function ProcessingView({ jobId, onComplete }: Props) {
   const [job, setJob] = useState<JobResponse | null>(null);
@@ -53,9 +51,11 @@ export function ProcessingView({ jobId, onComplete }: Props) {
   const currentIdx = job ? stageIndex(job.stage) : 0;
 
   return (
-    <div className="max-w-lg mx-auto mt-12 space-y-6">
-      <h2 className="text-xl font-semibold">Analysing your video…</h2>
-      <p className="text-sm text-gray-400">Job ID: <span className="font-mono">{jobId}</span></p>
+    <div className="max-w-lg mx-auto mt-8 sm:mt-12 space-y-5">
+      <div>
+        <h2 className="text-lg sm:text-xl font-semibold">Analysing your video…</h2>
+        <p className="text-xs text-gray-500 mt-1 font-mono">{jobId}</p>
+      </div>
 
       {job && (
         <div className="w-full bg-gray-800 rounded-full h-2">
@@ -66,32 +66,27 @@ export function ProcessingView({ jobId, onComplete }: Props) {
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="space-y-1">
         {STAGES.map(({ key, label, description }) => {
           const idx = stageIndex(key);
-          const done = currentIdx > idx;
+          const done   = currentIdx > idx;
           const active = currentIdx === idx;
-          const pending = currentIdx < idx;
 
           return (
             <div
               key={key}
-              className={`flex items-center gap-3 p-3 rounded-lg transition-colors
-                ${active ? "bg-gray-800 border border-gray-600" : ""}
-                ${done ? "opacity-70" : ""}
-                ${pending ? "opacity-30" : ""}`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors
+                ${active ? "bg-gray-800 border border-gray-700" : ""}
+                ${done ? "opacity-60" : ""}
+                ${!done && !active ? "opacity-25" : ""}`}
             >
-              <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
-                {done ? (
-                  <span className="text-pitch-500">✓</span>
-                ) : active ? (
-                  <span className="animate-spin">⟳</span>
-                ) : (
-                  <span className="text-gray-600">○</span>
-                )}
+              <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 text-sm">
+                {done   ? <span className="text-pitch-500">✓</span>
+                : active ? <span className="animate-spin inline-block">⟳</span>
+                :          <span className="text-gray-600">○</span>}
               </div>
-              <div>
-                <p className={`text-sm font-medium ${active ? "text-white" : ""}`}>{label}</p>
+              <div className="min-w-0">
+                <p className={`text-sm font-medium truncate ${active ? "text-white" : ""}`}>{label}</p>
                 {active && <p className="text-xs text-gray-400">{description}</p>}
               </div>
             </div>
@@ -101,8 +96,8 @@ export function ProcessingView({ jobId, onComplete }: Props) {
 
       {error && (
         <div className="p-4 bg-red-900/40 border border-red-700 rounded-lg">
-          <p className="text-red-300 font-medium">Pipeline error</p>
-          <p className="text-sm text-red-400 mt-1">{error}</p>
+          <p className="text-red-300 font-medium text-sm">Pipeline error</p>
+          <p className="text-xs text-red-400 mt-1 break-all">{error}</p>
         </div>
       )}
     </div>

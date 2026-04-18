@@ -75,7 +75,6 @@ async def get_job(job_id: str):
         insights = raw if raw else None
 
     has_video = (job_dir / "annotated.mp4").exists()
-    has_llm = bool(insights) and bool(ANTHROPIC_API_KEY)
 
     return {
         "job_id": job_id,
@@ -85,7 +84,8 @@ async def get_job(job_id: str):
         "analysis": analysis,
         "insights": insights,
         "has_annotated_video": has_video,
-        "has_llm_insights": has_llm,
+        "has_llm_insights": bool(insights),        # did this job produce insights?
+        "llm_enabled": bool(ANTHROPIC_API_KEY),    # is the key configured right now?
     }
 
 

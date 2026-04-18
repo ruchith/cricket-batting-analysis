@@ -15,16 +15,43 @@ def _status_path(job_dir: Path) -> Path:
     return job_dir / "status.json"
 
 
-def _write_status(job_dir: Path, stage: Stage, progress: float, error: str | None = None) -> None:
-    status = {"stage": stage.value, "progress": progress}
+def _write_status(job_dir: Path, stage: Stage, progress: float,
+                  error: str | None = None) -> None:
+    existing = {}
+    sp = _status_path(job_dir)
+    if sp.exists():
+        try:
+            existing = json.loads(sp.read_text())
+        except Exception:
+            pass
+    existing.update({"stage": stage.value, "progress": progress})
     if error:
-        status["error"] = error
-    _status_path(job_dir).write_text(json.dumps(status))
+        existing["error"] = error
+    sp.write_text(json.dumps(existing))
 
 
-async def process_video(ctx: dict, job_id: str, upload_path: str) -> None:
-    job_dir = JOBS_DIR / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
+async def process_video(ctx: dict, job_id: str, upload_path: str,
+                        video_id: str | None = None,
+                        analysis_id: str | None = None,
+                        corrections: dict | None = None) -> None:
+    """
+    Main pipeline task.
+    If video_id + analysis_id are provided, write to library structure.
+    Otherwise fall back to legacy data/jobs/{job_id}/ path.
+    """
+    from app.library import analysis_dir as lib_analysis_dir, video_dir as lib_video_dir
+
+    if video_id and analysis_id:
+        job_dir = lib_analysis_dir(video_id, analysis_id)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        # For re-analysis: use stored original instead of upload_path
+        original_candidates = list(lib_video_dir(video_id).glob("original.*"))
+        if original_candidates and not Path(upload_path).exists():
+            upload_path = str(original_candidates[0])
+    else:
+        job_dir = JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
     upload = Path(upload_path)
 
     try:
@@ -50,8 +77,7 @@ async def process_video(ctx: dict, job_id: str, upload_path: str) -> None:
         _write_status(job_dir, Stage.metrics, 0.65)
         from app.pipeline.metrics import compute_metrics
         analysis = compute_metrics(kp_path)
-        analysis_path = job_dir / "analysis.json"
-        analysis_path.write_text(json.dumps(analysis, indent=2))
+        (job_dir / "analysis.json").write_text(json.dumps(analysis, indent=2))
         log.info("[%s] Metrics complete: %s", job_id, analysis)
 
         # ── Stage 5: Render
@@ -60,10 +86,11 @@ async def process_video(ctx: dict, job_id: str, upload_path: str) -> None:
         await render.run(job_dir, video, kp_path)
         log.info("[%s] Render complete", job_id)
 
-        # ── Stage 6: LLM insights (skippable)
+        # ── Stage 6: LLM insights
         _write_status(job_dir, Stage.llm, 0.88)
         if ANTHROPIC_API_KEY:
-            await _run_llm_stage(job_id, job_dir, analysis, kp_path, video)
+            await _run_llm_stage(job_id, job_dir, analysis, kp_path, video,
+                                 corrections=corrections or {})
         else:
             log.info("[%s] Skipping LLM stage (no ANTHROPIC_API_KEY)", job_id)
             (job_dir / "insights.json").write_text(json.dumps({}))
@@ -75,35 +102,39 @@ async def process_video(ctx: dict, job_id: str, upload_path: str) -> None:
         log.exception("[%s] Pipeline failed", job_id)
         _write_status(job_dir, Stage.failed, 0.0, str(e))
     finally:
-        # Clean up the temp upload file
-        if upload.exists():
+        if upload.exists() and str(upload).startswith(str(JOBS_DIR.parent / "_upload")):
             upload.unlink(missing_ok=True)
 
 
-async def _run_llm_stage(
-    job_id: str,
-    job_dir: Path,
-    analysis: dict,
-    kp_path: Path,
-    video_path: Path,
-) -> None:
+async def _run_llm_stage(job_id: str, job_dir: Path, analysis: dict,
+                         kp_path: Path, video_path: Path,
+                         corrections: dict | None = None) -> None:
     from app.pipeline import llm_client
     from app.pipeline.metrics import build_pose_summary
 
     insights: dict = {}
+    corrections = corrections or {}
 
     # Coaching feedback via Haiku
     feedback = llm_client.generate_coaching_feedback(job_dir, analysis)
     if feedback:
         insights["coaching_feedback"] = feedback
 
-    # Shot classification via Sonnet
-    pose_summary = build_pose_summary(kp_path)
-    shot = llm_client.classify_shot(job_dir, pose_summary)
-    if shot:
-        insights["shot_classification"] = shot
+    # Shot classification via Sonnet (skip if user already corrected it)
+    if "shot_type" in corrections:
+        insights["shot_classification"] = {
+            "shot_type": corrections["shot_type"],
+            "confidence": "high",
+            "reasoning": f"Corrected by user to: {corrections['shot_type']}",
+        }
+        log.info("[%s] Shot type set from user correction: %s", job_id, corrections["shot_type"])
+    else:
+        pose_summary = build_pose_summary(kp_path)
+        shot = llm_client.classify_shot(job_dir, pose_summary)
+        if shot:
+            insights["shot_classification"] = shot
 
-    # Vision review via Sonnet — extract 3 key frames
+    # Vision review via Sonnet
     key_frames = _extract_key_frames(job_dir, video_path, kp_path)
     if key_frames:
         vision = llm_client.vision_review_frames(job_dir, key_frames)
@@ -115,29 +146,23 @@ async def _run_llm_stage(
 
 
 def _extract_key_frames(job_dir: Path, video_path: Path, kp_path: Path) -> list[dict]:
-    """Extract start-of-backlift, top-of-backlift, and midpoint frames as JPEG."""
     import cv2
-    import json as _json
-
     frames_dir = job_dir / "key_frames"
     frames_dir.mkdir(exist_ok=True)
 
-    # Load keypoints to find backlift peak
     frames_data = []
     with kp_path.open() as f:
         for line in f:
             line = line.strip()
             if line:
-                frames_data.append(_json.loads(line))
+                frames_data.append(json.loads(line))
 
     detected = [f for f in frames_data if f["detected"] and f["keypoints"]]
     if not detected:
         return []
 
-    # Find frame with highest right wrist above right shoulder
     best_backlift_val = -float("inf")
     best_backlift_idx = len(detected) // 2
-
     for fd in detected:
         kp = fd["keypoints"]
         rw = kp.get("right_wrist")
@@ -148,7 +173,6 @@ def _extract_key_frames(job_dir: Path, video_path: Path, kp_path: Path) -> list[
                 best_backlift_val = height
                 best_backlift_idx = fd["frame_index"]
 
-    # Three keyframes: start, top of backlift, midpoint
     total = len(frames_data)
     keyframe_indices = {
         "start_of_backlift": max(0, best_backlift_idx - total // 6),

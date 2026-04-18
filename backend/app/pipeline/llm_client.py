@@ -182,7 +182,7 @@ Provide 3-5 observations per frame. Be specific about what you observe.""",
         response = _call_with_retry(
             client.messages.create,
             model=SONNET,
-            max_tokens=800,
+            max_tokens=2048,
             messages=[{"role": "user", "content": content}],
         )
         text = response.content[0].text.strip()

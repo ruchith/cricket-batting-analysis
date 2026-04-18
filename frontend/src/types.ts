@@ -51,4 +51,59 @@ export interface JobResponse {
   insights?: Insights;
   has_annotated_video: boolean;
   has_llm_insights: boolean;
+  llm_enabled: boolean;
+}
+
+// ── Library types ─────────────────────────────────────────────────────────────
+
+export interface AnalysisSummary {
+  analysis_id: string;
+  stage: Stage;
+  progress: number;
+  created_at: number;
+  has_annotated_video: boolean;
+  has_llm_insights: boolean;
+  error?: string;
+  analysis?: StanceMetrics;
+  insights?: Insights;
+  llm_enabled?: boolean;
+}
+
+export interface VideoMeta {
+  video_id: string;
+  filename: string;
+  created_at: number;
+  analyses: AnalysisSummary[];
+  conversations: ConversationMeta[];
+  conversation_count?: number;
+  llm_enabled?: boolean;
+}
+
+export interface ConversationMeta {
+  conv_id: string;
+  title: string;
+  created_at: number;
+  message_count: number;
+  last_message: string;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  ts: number;
+  action?: string;
+}
+
+export interface Conversation {
+  conv_id: string;
+  title: string;
+  created_at: number;
+  messages: ChatMessage[];
+}
+
+export interface SendMessageResponse {
+  reply: string;
+  action?: string;
+  corrections?: Record<string, string>;
+  triggered_analysis_id?: string;
 }

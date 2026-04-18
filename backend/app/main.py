@@ -3,19 +3,16 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import BACKEND_PORT, REDIS_HOST, REDIS_PORT
+from app.config import BACKEND_PORT, REDIS_HOST, REDIS_PORT, DATA_DIR
+from app.logging_config import configure
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    stream=sys.stdout,
-)
+configure(DATA_DIR.parent / "logs", "backend")
 log = logging.getLogger(__name__)
 
 
@@ -51,7 +48,9 @@ app.add_middleware(
 )
 
 from app.api.routes import router
+from app.api.video_routes import router as video_router
 app.include_router(router)
+app.include_router(video_router)
 
 
 @app.get("/health")
