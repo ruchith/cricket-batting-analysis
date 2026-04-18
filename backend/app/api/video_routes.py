@@ -156,6 +156,7 @@ async def get_analysis_report(video_id: str, analysis_id: str):
         insights=detail.get("insights"),
         segmentation=detail.get("segmentation"),
         analysis_id=analysis_id,
+        analysis_dir=analysis_dir(video_id, analysis_id),
     )
     filename = video_meta.get("filename", "analysis").replace(" ", "_")
     return HTMLResponse(
