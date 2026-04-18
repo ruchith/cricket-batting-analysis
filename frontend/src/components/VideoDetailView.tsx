@@ -219,9 +219,32 @@ function AnalysisPanel({
   const [impactError, setImpactError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // Derive FPS from segmentation timestamps, fall back to 30
+  const fps = (() => {
+    const seg = analysis.segmentation;
+    if (seg && seg.peak_frame > 0 && seg.peak_ts > 0) {
+      return Math.round(seg.peak_frame / seg.peak_ts);
+    }
+    return 30;
+  })();
+
+  const seekToTs = useCallback((ts: number) => {
+    if (!videoRef.current) return;
+    videoRef.current.currentTime = ts;
+    videoRef.current.pause();
+  }, []);
+
+  const stepFrame = useCallback((delta: number) => {
+    if (!videoRef.current) return;
+    videoRef.current.currentTime = Math.max(
+      0, videoRef.current.currentTime + delta / fps
+    );
+    videoRef.current.pause();
+  }, [fps]);
+
   const handleMarkImpact = useCallback(async () => {
     if (!videoRef.current) return;
-    const frame = Math.round(videoRef.current.currentTime * 30);
+    const frame = Math.round(videoRef.current.currentTime * fps);
     setMarkingImpact(true);
     setImpactError(null);
     try {
@@ -232,7 +255,7 @@ function AnalysisPanel({
     } finally {
       setMarkingImpact(false);
     }
-  }, [videoId, analysis.analysis_id]);
+  }, [videoId, analysis.analysis_id, fps]);
 
   return (
     <div className="flex flex-col lg:flex-row gap-4">
@@ -267,6 +290,18 @@ function AnalysisPanel({
 
         {analysis.stage === "complete" && (
           <div className="flex flex-wrap items-center gap-2">
+            {/* Frame step buttons */}
+            <button
+              onClick={() => stepFrame(-1)}
+              className="w-9 h-9 flex items-center justify-center bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 rounded-lg text-sm font-mono transition-colors touch-manipulation"
+              title="Previous frame"
+            >‹</button>
+            <button
+              onClick={() => stepFrame(1)}
+              className="w-9 h-9 flex items-center justify-center bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 rounded-lg text-sm font-mono transition-colors touch-manipulation"
+              title="Next frame"
+            >›</button>
+
             <button
               onClick={handleMarkImpact}
               disabled={markingImpact}
@@ -305,6 +340,7 @@ function AnalysisPanel({
                 analysis={analysis.analysis}
                 segmentation={analysis.segmentation}
                 confidence={analysis.confidence}
+                onSeekToTs={seekToTs}
               />
             )}
             {tab === "ai" && (
@@ -329,12 +365,27 @@ function fmt(ts: number): string {
   return `${s}.${ms}s`;
 }
 
+function SeekBtn({ ts, onSeek }: { ts: number; onSeek: (ts: number) => void }) {
+  return (
+    <button
+      onClick={() => onSeek(ts)}
+      className="ml-1.5 w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-pitch-500 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors touch-manipulation flex-shrink-0"
+      title={`Jump to ${ts.toFixed(2)}s`}
+    >
+      <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+        <path d="M3 2.5v11l10-5.5L3 2.5z" />
+      </svg>
+    </button>
+  );
+}
+
 function MetricsPanel({
-  analysis, segmentation, confidence,
+  analysis, segmentation, confidence, onSeekToTs,
 }: {
   analysis: StanceMetrics;
   segmentation?: ShotSegmentation;
   confidence?: FrameConfidence[];
+  onSeekToTs?: (ts: number) => void;
 }) {
   const rows = [
     { label: "Stance Width",              value: analysis.stance_width_normalized,  unit: "× shoulder" },
@@ -352,24 +403,21 @@ function MetricsPanel({
         <div>
           <h3 className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-2">Shot Window</h3>
           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-transparent rounded-lg p-3 space-y-1.5 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-500">Start</span>
-              <span className="font-mono text-gray-800 dark:text-gray-200">
-                f{segmentation.shot_start_frame} · {fmt(segmentation.shot_start_ts)}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Peak backlift</span>
-              <span className="font-mono text-gray-800 dark:text-gray-200">
-                f{segmentation.peak_frame} · {fmt(segmentation.peak_ts)}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">End</span>
-              <span className="font-mono text-gray-800 dark:text-gray-200">
-                f{segmentation.shot_end_frame} · {fmt(segmentation.shot_end_ts)}
-              </span>
-            </div>
+            {([
+              { label: "Start",        frame: segmentation.shot_start_frame, ts: segmentation.shot_start_ts },
+              { label: "Peak backlift", frame: segmentation.peak_frame,       ts: segmentation.peak_ts },
+              { label: "End",          frame: segmentation.shot_end_frame,   ts: segmentation.shot_end_ts },
+            ] as const).map(({ label, frame, ts }) => (
+              <div key={label} className="flex items-center justify-between">
+                <span className="text-gray-500 flex items-center gap-0.5">
+                  {label}
+                  {onSeekToTs && <SeekBtn ts={ts} onSeek={onSeekToTs} />}
+                </span>
+                <span className="font-mono text-gray-800 dark:text-gray-200">
+                  f{frame} · {fmt(ts)}
+                </span>
+              </div>
+            ))}
             <div className="flex justify-between">
               <span className="text-gray-500">Duration</span>
               <span className="font-mono text-gray-800 dark:text-gray-200">
