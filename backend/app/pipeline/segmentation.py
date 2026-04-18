@@ -41,6 +41,18 @@ def _wrist_height(frame: dict) -> float | None:
     return best
 
 
+def _first_local_peak(arr: list[float], min_val: float = 0.0) -> int | None:
+    """Return index of the first local maximum above min_val, or None."""
+    n = len(arr)
+    for i in range(1, n - 1):
+        if arr[i] >= min_val and arr[i] > arr[i - 1] and arr[i] >= arr[i + 1]:
+            # Confirm it's a real peak: must be higher than a window behind it
+            lookback = max(0, i - 5)
+            if arr[i] >= max(arr[lookback:i], default=0):
+                return i
+    return None
+
+
 def _smooth(values: list[float], window: int = 5) -> list[float]:
     if len(values) < window:
         return values
@@ -74,19 +86,30 @@ def detect_shot_boundaries(kp_path: Path) -> dict:
     heights = [s[2] for s in series]
     smoothed = _smooth(heights, window=7)
 
-    peak_local_idx = int(np.argmax(smoothed))
-    peak_frame, peak_ts, _ = series[peak_local_idx]
-
     # Baseline: median of first 15% of series (stance period)
     pre_count = max(1, len(series) // 7)
     baseline = float(np.median(smoothed[:pre_count]))
-    peak_val = smoothed[peak_local_idx]
-    swing = peak_val - baseline
+    global_max = float(np.max(smoothed))
+    swing = global_max - baseline
 
     if swing < 5:
         # Very little wrist movement — can't reliably segment
         log.info("Segmentation: small wrist swing (%.1fpx), using full clip", swing)
         return _fallback(frames)
+
+    # The backlift is the FIRST significant wrist-height peak.
+    # The follow-through often rises higher, so we must not take the global max.
+    # Strategy:
+    #   1. Find the first local maximum above the backlift threshold (first peak).
+    #   2. If none found, fall back to argmax of the first 65% of frames —
+    #      contact always falls in the latter half of any cricket shot.
+    backlift_threshold = baseline + 0.25 * swing
+    peak_local_idx = _first_local_peak(smoothed, min_val=backlift_threshold)
+    if peak_local_idx is None:
+        search_end = max(5, int(len(smoothed) * 0.65))
+        peak_local_idx = int(np.argmax(smoothed[:search_end]))
+
+    peak_frame, peak_ts, _ = series[peak_local_idx]
 
     start_threshold = baseline + 0.15 * swing
     end_threshold   = baseline + 0.20 * swing
@@ -109,11 +132,12 @@ def detect_shot_boundaries(kp_path: Path) -> dict:
     shot_end_frame, shot_end_ts, _     = series[shot_end_local]
 
     log.info(
-        "Segmentation: start=f%d (%.2fs), peak=f%d (%.2fs), end=f%d (%.2fs), swing=%.1fpx",
+        "Segmentation: start=f%d (%.2fs), backlift_peak=f%d (%.2fs), end=f%d (%.2fs), "
+        "swing=%.1fpx global_max=%.1fpx",
         shot_start_frame, shot_start_ts,
         peak_frame, peak_ts,
         shot_end_frame, shot_end_ts,
-        swing,
+        swing, global_max,
     )
 
     return {
