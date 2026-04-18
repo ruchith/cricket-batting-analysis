@@ -1,0 +1,30 @@
+# data (large files)
+data/jobs/
+data/llm_feedback.jsonl
+data/_upload_*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.uv/
+backend/.venv/
+*.egg-info/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Secrets
+.env
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
