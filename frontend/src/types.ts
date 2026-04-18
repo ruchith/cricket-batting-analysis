@@ -21,6 +21,8 @@ export interface StanceMetrics {
 export interface CoachingFeedback {
   strengths: string[];
   issues: string[];
+  focus_areas?: string[];
+  corrective_actions?: string[];
   drills: string[];
 }
 

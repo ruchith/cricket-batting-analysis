@@ -105,6 +105,10 @@ export async function deleteAnalysis(videoId: string, analysisId: string): Promi
   await fetch(`${BASE}/videos/${videoId}/analyses/${analysisId}`, { method: "DELETE" });
 }
 
+export function analysisReportUrl(videoId: string, analysisId: string): string {
+  return `${BASE}/videos/${videoId}/analyses/${analysisId}/report`;
+}
+
 export function analysisVideoUrl(videoId: string, analysisId: string): string {
   return `${BASE}/videos/${videoId}/analyses/${analysisId}/video`;
 }

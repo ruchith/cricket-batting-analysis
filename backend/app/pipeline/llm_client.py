@@ -75,10 +75,14 @@ Respond with valid JSON matching this exact schema:
 {{
   "strengths": ["<strength 1>", ...],
   "issues": ["<issue 1>", ...],
+  "focus_areas": ["<what to concentrate on in the next session>", ...],
+  "corrective_actions": ["<specific technical correction to make immediately>", ...],
   "drills": ["<drill 1>", ...]
 }}
 
 Use 2-4 items per list. Be specific and actionable. Mention the actual metric values.
+focus_areas should describe what the batter should consciously think about during play.
+corrective_actions should be concrete, step-by-step technical fixes tied to the identified issues.
 If previous user feedback contradicts or refines the metrics, prioritise the user's account."""
 
     try:

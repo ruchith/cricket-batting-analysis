@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   getVideo, getAnalysis, rerunAnalysis, deleteAnalysis,
-  analysisVideoUrl, markAnalysisImpact,
+  analysisVideoUrl, markAnalysisImpact, analysisReportUrl,
 } from "../api";
 import { ChatPanel } from "./ChatPanel";
 import type {
@@ -402,12 +402,12 @@ function AnalysisPanel({
       {/* Tabs */}
       {analysis.stage === "complete" && (
         <div className="lg:w-80 flex flex-col min-w-0">
-          <div className="flex border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center border-b border-gray-200 dark:border-gray-700">
             {(["metrics", "ai"] as Tab[]).map(key => (
               <button
                 key={key}
                 onClick={() => setTab(key)}
-                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors touch-manipulation
+                className={`px-4 py-3 text-sm font-medium transition-colors touch-manipulation
                   ${tab === key
                     ? "text-gray-900 dark:text-white border-b-2 border-pitch-500 -mb-px"
                     : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"}`}
@@ -415,6 +415,19 @@ function AnalysisPanel({
                 {key === "metrics" ? "Metrics" : "AI Insights"}
               </button>
             ))}
+            {analysis.has_llm_insights && (
+              <a
+                href={analysisReportUrl(videoId, analysis.analysis_id)}
+                download
+                className="ml-auto mr-1 flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-pitch-500 text-white hover:bg-pitch-700 transition-colors touch-manipulation"
+                title="Download HTML report"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Report
+              </a>
+            )}
           </div>
           <div className="bg-gray-100 dark:bg-gray-900 rounded-b-xl rounded-tr-xl p-4 overflow-y-auto" style={{ maxHeight: "60vh" }}>
             {tab === "metrics" && analysis.analysis && (
@@ -685,9 +698,11 @@ function AIPanel({
         <section>
           <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-2">Coaching Feedback</h4>
           <div className="space-y-3">
-            <FeedbackList label="Strengths" color="text-pitch-600 dark:text-pitch-500" items={coaching_feedback.strengths} />
-            <FeedbackList label="Issues"    color="text-red-500 dark:text-red-400"     items={coaching_feedback.issues} />
-            <FeedbackList label="Drills"    color="text-yellow-600 dark:text-yellow-400" items={coaching_feedback.drills} />
+            <FeedbackList label="✅ Strengths"          color="text-pitch-600 dark:text-pitch-500"    items={coaching_feedback.strengths} />
+            <FeedbackList label="⚠️ Areas to Improve"   color="text-red-500 dark:text-red-400"        items={coaching_feedback.issues} />
+            <FeedbackList label="🎯 Focus Areas"        color="text-blue-600 dark:text-blue-400"      items={coaching_feedback.focus_areas ?? []} />
+            <FeedbackList label="🔧 Corrective Actions" color="text-violet-600 dark:text-violet-400"  items={coaching_feedback.corrective_actions ?? []} />
+            <FeedbackList label="🏋️ Drills"             color="text-yellow-600 dark:text-yellow-400"  items={coaching_feedback.drills} />
           </div>
         </section>
       )}

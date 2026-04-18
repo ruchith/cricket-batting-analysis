@@ -8,7 +8,7 @@ from pathlib import Path
 
 import aiofiles
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.config import ANTHROPIC_API_KEY
@@ -140,6 +140,28 @@ async def get_analysis_detail(video_id: str, analysis_id: str):
         raise HTTPException(404, "Analysis not found")
     result["llm_enabled"] = bool(ANTHROPIC_API_KEY)
     return result
+
+
+@router.get("/{video_id}/analyses/{analysis_id}/report")
+async def get_analysis_report(video_id: str, analysis_id: str):
+    _require_video(video_id)
+    detail = get_analysis(video_id, analysis_id)
+    if not detail:
+        raise HTTPException(404, "Analysis not found")
+    video_meta = get_video_meta(video_id) or {}
+    from app.pipeline.report import generate_report
+    html = generate_report(
+        video_meta=video_meta,
+        analysis=detail.get("analysis"),
+        insights=detail.get("insights"),
+        segmentation=detail.get("segmentation"),
+        analysis_id=analysis_id,
+    )
+    filename = video_meta.get("filename", "analysis").replace(" ", "_")
+    return HTMLResponse(
+        content=html,
+        headers={"Content-Disposition": f'attachment; filename="{filename}_report.html"'},
+    )
 
 
 @router.delete("/{video_id}/analyses/{analysis_id}")
