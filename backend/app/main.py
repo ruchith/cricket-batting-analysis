@@ -8,6 +8,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import BACKEND_PORT, REDIS_HOST, REDIS_PORT, DATA_DIR
 from app.logging_config import configure
@@ -56,3 +58,15 @@ app.include_router(video_router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ── SPA static file serving (production build) ────────────────────────────────
+
+_FRONTEND_DIST = Path(__file__).parent.parent.parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.is_dir():
+    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        return FileResponse(_FRONTEND_DIST / "index.html")

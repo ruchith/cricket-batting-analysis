@@ -5,6 +5,14 @@ import { VideoDetailView } from "./components/VideoDetailView";
 
 type AppView = "upload" | "library" | "video";
 
+const UUID_RE = /^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+function parseUrl(): { view: AppView; videoId: string | null } {
+  const match = window.location.pathname.match(UUID_RE);
+  if (match) return { view: "video", videoId: match[1] };
+  return { view: "library", videoId: null };
+}
+
 function useDarkMode() {
   const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark");
 
@@ -17,29 +25,47 @@ function useDarkMode() {
 }
 
 export default function App() {
-  const [view, setView] = useState<AppView>("library");
-  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const initial = parseUrl();
+  const [view, setView] = useState<AppView>(initial.view);
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(initial.videoId);
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
   const [libraryKey, setLibraryKey] = useState(0);
   const [dark, setDark] = useDarkMode();
 
-  const handleJobCreated = useCallback((videoId: string, analysisId: string) => {
+  // Sync URL → state on browser back/forward
+  useEffect(() => {
+    const onPop = () => {
+      const { view: v, videoId } = parseUrl();
+      setView(v);
+      setSelectedVideoId(videoId);
+      setSelectedAnalysisId(null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const navigateToVideo = useCallback((videoId: string, analysisId: string | null = null) => {
+    history.pushState(null, "", `/${videoId}`);
     setSelectedVideoId(videoId);
     setSelectedAnalysisId(analysisId);
-    setLibraryKey(k => k + 1);
     setView("video");
   }, []);
 
-  const handleSelectVideo = useCallback((videoId: string) => {
-    setSelectedVideoId(videoId);
-    setSelectedAnalysisId(null);
-    setView("video");
-  }, []);
-
-  const handleBackToLibrary = useCallback(() => {
+  const navigateToLibrary = useCallback(() => {
+    history.pushState(null, "", "/");
     setLibraryKey(k => k + 1);
     setView("library");
   }, []);
+
+  const navigateToUpload = useCallback(() => {
+    history.pushState(null, "", "/");
+    setView("upload");
+  }, []);
+
+  const handleJobCreated = useCallback((videoId: string, analysisId: string) => {
+    setLibraryKey(k => k + 1);
+    navigateToVideo(videoId, analysisId);
+  }, [navigateToVideo]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -49,7 +75,7 @@ export default function App() {
 
         <div className="ml-auto flex items-center gap-1">
           <button
-            onClick={() => setView("library")}
+            onClick={navigateToLibrary}
             className={`text-sm px-3 py-2 rounded-lg transition-colors touch-manipulation
               ${view === "library"
                 ? "text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-800"
@@ -58,7 +84,7 @@ export default function App() {
             Library
           </button>
           <button
-            onClick={() => setView("upload")}
+            onClick={navigateToUpload}
             className={`text-sm px-3 py-2 rounded-lg transition-colors touch-manipulation
               ${view === "upload"
                 ? "text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-800"
@@ -83,14 +109,14 @@ export default function App() {
         )}
         {view === "library" && (
           <div className="max-w-2xl mx-auto">
-            <LibraryView onSelectVideo={handleSelectVideo} refreshKey={libraryKey} />
+            <LibraryView onSelectVideo={navigateToVideo} refreshKey={libraryKey} />
           </div>
         )}
         {view === "video" && selectedVideoId && (
           <VideoDetailView
             videoId={selectedVideoId}
             initialAnalysisId={selectedAnalysisId ?? undefined}
-            onBack={handleBackToLibrary}
+            onBack={navigateToLibrary}
           />
         )}
       </main>
