@@ -187,17 +187,25 @@ def _extract_key_frames(job_dir: Path, video_path: Path, kp_path: Path) -> list[
     if not detected:
         return []
 
-    best_backlift_val = -float("inf")
-    best_backlift_idx = len(detected) // 2
-    for fd in detected:
-        kp = fd["keypoints"]
-        rw = kp.get("right_wrist")
-        rs = kp.get("right_shoulder")
-        if rw and rs and rw.get("visibility", 0) > 0.3 and rs.get("visibility", 0) > 0.3:
-            height = rs["y"] - rw["y"]
-            if height > best_backlift_val:
-                best_backlift_val = height
-                best_backlift_idx = fd["frame_index"]
+    # Prefer segmentation.json peak_frame (uses first-local-peak, avoids follow-through)
+    best_backlift_idx = None
+    seg_path = job_dir / "segmentation.json"
+    if seg_path.exists():
+        seg = json.loads(seg_path.read_text())
+        best_backlift_idx = seg.get("peak_frame")
+
+    if best_backlift_idx is None:
+        best_backlift_val = -float("inf")
+        best_backlift_idx = len(detected) // 2
+        for fd in detected:
+            kp = fd["keypoints"]
+            rw = kp.get("right_wrist")
+            rs = kp.get("right_shoulder")
+            if rw and rs and rw.get("visibility", 0) > 0.3 and rs.get("visibility", 0) > 0.3:
+                height = rs["y"] - rw["y"]
+                if height > best_backlift_val:
+                    best_backlift_val = height
+                    best_backlift_idx = fd["frame_index"]
 
     total = len(frames_data)
     keyframe_indices = {

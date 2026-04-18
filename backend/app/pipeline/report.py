@@ -5,10 +5,17 @@ import base64
 import time
 from pathlib import Path
 
-# Ordered display labels for known key frame filenames
-_FRAME_ORDER = ["start_of_backlift", "top_of_backlift", "mid_shot"]
 _FRAME_LABELS = {
-    "start_of_backlift": "Pre-shot / Start of Backlift",
+    "shot_start":   "Shot Start",
+    "top_backlift": "Top of Backlift",
+    "mid_shot":     "Mid-Shot",
+    "shot_end":     "Shot End",
+    "impact":       "Impact",
+}
+# Fallback file names stored on disk by the pipeline
+_DISK_FRAME_ORDER = ["start_of_backlift", "top_of_backlift", "mid_shot"]
+_DISK_FRAME_LABELS = {
+    "start_of_backlift": "Shot Start",
     "top_of_backlift":   "Top of Backlift",
     "mid_shot":          "Mid-Shot",
 }
@@ -43,13 +50,73 @@ def _list_section(title: str, color: str, items: list[str]) -> str:
     </div>"""
 
 
-def _load_key_frames(analysis_dir: Path) -> list[tuple[str, str]]:
-    """Return [(label, data_uri), ...] for all key frames, ordered logically."""
+def _frame_to_data_uri(cap, frame_idx: int) -> str | None:
+    """Seek a cv2 VideoCapture to frame_idx and return a JPEG data URI."""
+    import cv2
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ok, frame = cap.read()
+    if not ok:
+        return None
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    data = base64.standard_b64encode(buf.tobytes()).decode()
+    return f"data:image/jpeg;base64,{data}"
+
+
+def _load_key_frames(
+    analysis_dir: Path,
+    segmentation: dict | None,
+    analysis: dict | None,
+) -> list[tuple[str, str]]:
+    """Return [(label, data_uri), ...] extracted from the annotated video.
+
+    Preferred source: annotated.mp4 (has skeleton overlay) at exact frame
+    positions from segmentation.json.  Falls back to stored JPEG files if
+    the video is unavailable.
+    """
+    annotated = analysis_dir / "annotated.mp4"
+
+    if annotated.exists() and segmentation:
+        try:
+            import cv2
+            cap = cv2.VideoCapture(str(annotated))
+            result: list[tuple[str, str]] = []
+
+            seg = segmentation
+            start_f  = seg.get("shot_start_frame")
+            peak_f   = seg.get("peak_frame")
+            end_f    = seg.get("shot_end_frame")
+            impact_f = (analysis or {}).get("impact_frame")
+
+            # mid-shot: midpoint between peak backlift and shot end
+            mid_f = None
+            if peak_f is not None and end_f is not None:
+                mid_f = (peak_f + end_f) // 2
+
+            for label, frame_idx in [
+                ("Shot Start",       start_f),
+                ("Top of Backlift",  peak_f),
+                ("Mid-Shot",         mid_f),
+                ("Shot End",         end_f),
+                ("Impact",           impact_f),
+            ]:
+                if frame_idx is None:
+                    continue
+                uri = _frame_to_data_uri(cap, int(frame_idx))
+                if uri:
+                    result.append((label, uri))
+
+            cap.release()
+            if result:
+                return result
+        except Exception:
+            pass  # fall through to disk fallback
+
+    # Fallback: use pre-stored JPEG files
     frames_dir = analysis_dir / "key_frames"
     if not frames_dir.is_dir():
         return []
 
-    result: list[tuple[str, str]] = []
+    result = []
     seen: set[str] = set()
 
     def _encode(path: Path, label: str) -> None:
@@ -59,17 +126,14 @@ def _load_key_frames(analysis_dir: Path) -> list[tuple[str, str]]:
         result.append((label, f"data:image/jpeg;base64,{data}"))
         seen.add(path.name)
 
-    # Standard frames in logical shot order
-    for stem in _FRAME_ORDER:
-        _encode(frames_dir / f"{stem}.jpg", _FRAME_LABELS[stem])
+    for stem in _DISK_FRAME_ORDER:
+        _encode(frames_dir / f"{stem}.jpg", _DISK_FRAME_LABELS[stem])
 
-    # Any impact frames (sorted by frame number)
     impact_files = sorted(frames_dir.glob("impact_*.jpg"),
                           key=lambda p: int(p.stem.split("_")[-1]))
     for p in impact_files:
         if p.name not in seen:
-            frame_num = p.stem.split("_")[-1]
-            _encode(p, f"Impact Frame {frame_num}")
+            _encode(p, f"Impact Frame {p.stem.split('_')[-1]}")
 
     return result
 
@@ -146,7 +210,7 @@ def generate_report(
     shot_reasoning = sc.get("reasoning", "") if sc else ""
 
     # Key frame images
-    key_frames = _load_key_frames(analysis_dir) if analysis_dir else []
+    key_frames = _load_key_frames(analysis_dir, segmentation, analysis) if analysis_dir else []
     obs_map = _build_obs_map(insights)
     photo_html = _photo_strip(key_frames, obs_map)
 
