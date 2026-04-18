@@ -158,11 +158,7 @@ async def get_analysis_report(video_id: str, analysis_id: str):
         analysis_id=analysis_id,
         analysis_dir=analysis_dir(video_id, analysis_id),
     )
-    filename = video_meta.get("filename", "analysis").replace(" ", "_")
-    return HTMLResponse(
-        content=html,
-        headers={"Content-Disposition": f'attachment; filename="{filename}_report.html"'},
-    )
+    return HTMLResponse(content=html)
 
 
 @router.delete("/{video_id}/analyses/{analysis_id}")
