@@ -8,6 +8,26 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+_NVENC: bool | None = None
+
+
+async def _check_nvenc() -> bool:
+    """Check whether h264_nvenc is available; result is cached module-level."""
+    global _NVENC
+    if _NVENC is not None:
+        return _NVENC
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-encoders",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await proc.communicate()
+        _NVENC = b"h264_nvenc" in out
+    except Exception:
+        _NVENC = False
+    log.info("NVENC available: %s", _NVENC)
+    return _NVENC
+
 
 def _probe_rotation(src: Path) -> int:
     """Read rotation metadata via ffprobe. Returns degrees (0, 90, 180, 270)."""
@@ -74,16 +94,35 @@ async def run(job_dir: Path, raw: Path) -> Path:
     vf = _build_filter(rotation)
     log.info("Normalizing %s: rotation=%d fps=%s", raw.name, rotation, fps)
 
-    cmd = [
-        "ffmpeg", "-y", "-i", str(raw),
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-r", fps,            # force CFR
-        "-vsync", "cfr",
-        "-an",                # drop audio — not needed for analysis
-        "-movflags", "+faststart",
-        str(out),
-    ]
+    use_nvenc = await _check_nvenc()
+
+    if use_nvenc:
+        log.info("Normalize: using h264_nvenc encoder")
+        cmd = [
+            "ffmpeg", "-y",
+            "-hwaccel", "cuda",
+            "-i", str(raw),
+            "-vf", vf,
+            "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23",
+            "-r", fps,            # force CFR
+            "-vsync", "cfr",
+            "-an",                # drop audio — not needed for analysis
+            "-movflags", "+faststart",
+            str(out),
+        ]
+    else:
+        log.info("Normalize: using libx264 encoder (NVENC not available)")
+        cmd = [
+            "ffmpeg", "-y", "-i", str(raw),
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-r", fps,            # force CFR
+            "-vsync", "cfr",
+            "-an",                # drop audio — not needed for analysis
+            "-movflags", "+faststart",
+            str(out),
+        ]
+
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )

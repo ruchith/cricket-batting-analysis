@@ -1,86 +1,70 @@
-"""Stage 3: run MediaPipe Pose on every frame, write keypoints.jsonl.
+"""Stage 3: run YOLOv8m-pose on every frame (batched GPU inference), write keypoints.jsonl.
 
-Uses the MediaPipe Tasks API (mediapipe >= 0.10), downloading the
-pose_landmarker_full model on first run to DATA_DIR/models/.
+Single-person app (cricket batter): takes the highest-confidence detection per frame.
+COCO 17-keypoint format output.
 """
 from __future__ import annotations
 import json
 import logging
-import urllib.request
+import queue
+import threading
 from pathlib import Path
 
-import numpy as np
+import torch
+from ultralytics import YOLO
 
 log = logging.getLogger(__name__)
 
-_MODEL_URL = (
-    "https://storage.googleapis.com/mediapipe-models/"
-    "pose_landmarker/pose_landmarker_full/float16/latest/"
-    "pose_landmarker_full.task"
-)
-
-# MediaPipe PoseLandmark enum indices (Tasks API)
-_LANDMARK_NAMES = {
-    0: "nose",
-    1: "left_eye_inner", 2: "left_eye", 3: "left_eye_outer",
-    4: "right_eye_inner", 5: "right_eye", 6: "right_eye_outer",
-    7: "left_ear", 8: "right_ear",
-    9: "mouth_left", 10: "mouth_right",
-    11: "left_shoulder", 12: "right_shoulder",
-    13: "left_elbow", 14: "right_elbow",
-    15: "left_wrist", 16: "right_wrist",
-    17: "left_pinky", 18: "right_pinky",
-    19: "left_index", 20: "right_index",
-    21: "left_thumb", 22: "right_thumb",
-    23: "left_hip", 24: "right_hip",
-    25: "left_knee", 26: "right_knee",
-    27: "left_ankle", 28: "right_ankle",
-    29: "left_heel", 30: "right_heel",
-    31: "left_foot_index", 32: "right_foot_index",
-}
-
-# Names we care about (subset for metrics + rendering)
-_KEEP = {
+_COCO_NAMES = [
     "nose", "left_eye", "right_eye", "left_ear", "right_ear",
-    "left_shoulder", "right_shoulder",
-    "left_elbow", "right_elbow",
-    "left_wrist", "right_wrist",
-    "left_hip", "right_hip",
-    "left_knee", "right_knee",
-    "left_ankle", "right_ankle",
-}
+    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist", "left_hip", "right_hip",
+    "left_knee", "right_knee", "left_ankle", "right_ankle",
+]
+
+_MODEL_PATH = Path(__file__).parent / ".." / ".." / ".." / "yolov8m-pose.pt"
+_MODEL_CACHE: YOLO | None = None
+
+BATCH_SIZE = 16
+QUEUE_MAXSIZE = 8
 
 
-def _ensure_model() -> Path:
-    from app.config import DATA_DIR
-    model_dir = DATA_DIR / "models"
-    model_dir.mkdir(parents=True, exist_ok=True)
-    model_path = model_dir / "pose_landmarker_full.task"
-    if not model_path.exists():
-        log.info("Downloading MediaPipe pose model (~26 MB)…")
-        urllib.request.urlretrieve(_MODEL_URL, model_path)
-        log.info("Model downloaded to %s", model_path)
-    return model_path
+def _get_model() -> YOLO:
+    global _MODEL_CACHE
+    if _MODEL_CACHE is None:
+        mp = _MODEL_PATH.resolve()
+        model_path = str(mp) if mp.exists() else "yolov8m-pose.pt"
+        _MODEL_CACHE = YOLO(model_path)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        _MODEL_CACHE.to(device)
+        log.info("YOLOv8-pose loaded on %s", device)
+    return _MODEL_CACHE
+
+
+def _read_frames(cap, out_q, batch_size):
+    batch = []
+    idx = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            if batch:
+                out_q.put(batch)
+            out_q.put(None)
+            return
+        batch.append((idx, frame))
+        if len(batch) == batch_size:
+            out_q.put(batch)
+            batch = []
+        idx += 1
 
 
 async def run(job_dir: Path, video_path: Path) -> Path:
+    import asyncio
     import cv2
-    import mediapipe as mp
-    from mediapipe.tasks import python as mp_python
-    from mediapipe.tasks.python import vision as mp_vision
+    import numpy as np
 
-    model_path = _ensure_model()
+    model = _get_model()
     out_path = job_dir / "keypoints.jsonl"
-
-    base_options = mp_python.BaseOptions(model_asset_path=str(model_path))
-    options = mp_vision.PoseLandmarkerOptions(
-        base_options=base_options,
-        running_mode=mp_vision.RunningMode.VIDEO,
-        num_poses=1,
-        min_pose_detection_confidence=0.5,
-        min_pose_presence_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -90,50 +74,60 @@ async def run(job_dir: Path, video_path: Path) -> Path:
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    log.info("Pose: %s — %d frames at %.1ffps (%dx%d)", video_path.name, frame_count, fps, w, h)
+    log.info("Pose (YOLOv8-CUDA): %s — %d frames %.1ffps %dx%d", video_path.name, frame_count, fps, w, h)
 
-    with mp_vision.PoseLandmarker.create_from_options(options) as landmarker, \
-         out_path.open("w") as f:
+    frame_q: queue.Queue = queue.Queue(maxsize=QUEUE_MAXSIZE)
+    reader = threading.Thread(target=_read_frames, args=(cap, frame_q, BATCH_SIZE), daemon=True)
+    reader.start()
 
-        frame_idx = 0
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    results_map: dict[int, dict] = {}
 
-            # MediaPipe Tasks expects RGB
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    while True:
+        batch = frame_q.get()
+        if batch is None:
+            break
 
-            # Use timestamp in ms for VIDEO mode
-            timestamp_ms = int(frame_idx * 1000 / fps)
-            results = landmarker.detect_for_video(mp_image, timestamp_ms)
+        frames_bgr = [f for _, f in batch]
+        frame_indices = [i for i, _ in batch]
 
-            detected = bool(results.pose_landmarks)
+        preds = model(frames_bgr, verbose=False, device=device)
+
+        for pred, frame_idx in zip(preds, frame_indices):
+            detected = False
             kps: dict = {}
 
-            if detected:
-                # results.pose_landmarks is a list of pose(s); we take the first
-                landmarks = results.pose_landmarks[0]
-                for idx, lm in enumerate(landmarks):
-                    name = _LANDMARK_NAMES.get(idx)
-                    if name and name in _KEEP:
-                        kps[name] = {
-                            "x": round(lm.x * w, 2),
-                            "y": round(lm.y * h, 2),
-                            "z": round(lm.z, 4),
-                            "visibility": round(lm.visibility if lm.visibility is not None else 1.0, 4),
-                        }
+            if pred.keypoints is not None and len(pred.keypoints) > 0:
+                kps_xy = pred.keypoints.xy.cpu().numpy()       # (N, 17, 2)
+                kps_conf = pred.keypoints.conf.cpu().numpy() if pred.keypoints.conf is not None else None
 
-            entry = {
+                # Pick detection with highest mean keypoint confidence
+                if kps_conf is not None and len(kps_conf) > 0:
+                    best = int(np.argmax(kps_conf.mean(axis=1)))
+                else:
+                    best = 0
+
+                detected = True
+                for ki, name in enumerate(_COCO_NAMES):
+                    x, y = float(kps_xy[best, ki, 0]), float(kps_xy[best, ki, 1])
+                    vis = float(kps_conf[best, ki]) if kps_conf is not None else 1.0
+                    kps[name] = {"x": round(x, 2), "y": round(y, 2), "z": 0.0, "visibility": round(vis, 4)}
+
+            results_map[frame_idx] = {
                 "frame_index": frame_idx,
                 "timestamp": round(frame_idx / fps, 4),
                 "detected": detected,
                 "keypoints": kps,
             }
-            f.write(json.dumps(entry) + "\n")
-            frame_idx += 1
 
+        await asyncio.sleep(0)
+
+    reader.join()
     cap.release()
-    log.info("Pose complete: %d frames written", frame_idx)
+
+    with out_path.open("w") as f:
+        for idx in sorted(results_map):
+            f.write(json.dumps(results_map[idx]) + "\n")
+
+    log.info("Pose complete: %d frames, %d detected", frame_count, sum(1 for v in results_map.values() if v["detected"]))
     return out_path

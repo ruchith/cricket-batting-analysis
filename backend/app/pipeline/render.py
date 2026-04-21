@@ -14,6 +14,15 @@ import json
 import logging
 from pathlib import Path
 
+
+async def _nvenc_available() -> bool:
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-hide_banner", "-encoders",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    out, _ = await proc.communicate()
+    return b"h264_nvenc" in out
+
 import cv2
 import numpy as np
 
@@ -136,11 +145,25 @@ async def run(
 
     # Re-mux to browser-compatible H.264
     muxed = job_dir / "annotated_h264.mp4"
+    use_nvenc = await _nvenc_available()
+    if use_nvenc:
+        log.info("Render mux: using h264_nvenc encoder")
+        mux_cmd = [
+            "ffmpeg", "-y", "-i", str(out_path),
+            "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23",
+            "-movflags", "+faststart",
+            str(muxed),
+        ]
+    else:
+        log.info("Render mux: using libx264 encoder (NVENC not available)")
+        mux_cmd = [
+            "ffmpeg", "-y", "-i", str(out_path),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-movflags", "+faststart",
+            str(muxed),
+        ]
     proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-y", "-i", str(out_path),
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-movflags", "+faststart",
-        str(muxed),
+        *mux_cmd,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     _, stderr = await proc.communicate()

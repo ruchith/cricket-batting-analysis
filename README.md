@@ -171,6 +171,31 @@ ss -tlnp | grep -E '8082|3009|6382'
 
 ---
 
+## GPU Acceleration
+
+Optimised for NVIDIA GPUs with CUDA support.
+
+### Pose estimation (YOLOv8-pose)
+- **Engine**: YOLOv8m-pose via PyTorch + CUDA (replaces MediaPipe)
+- **Batching**: 16 frames per GPU inference call
+- **Async**: Background frame-reader thread keeps the GPU fed continuously
+- **Speedup**: ~15–25× faster than MediaPipe CPU on an RTX 4080 Super
+
+### Video encoding (NVENC)
+- Normalize and render stages auto-detect and use `h264_nvenc` if available
+- Falls back to `libx264` on CPU-only machines
+
+### Requirements
+- NVIDIA GPU with CUDA 12.x support
+- `torch >= 2.6`: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124`
+- `ultralytics >= 8.4`: `pip install ultralytics`
+- ffmpeg with NVENC: `ffmpeg -encoders | grep nvenc`
+
+### CPU fallback
+All GPU paths fall back to CPU automatically if CUDA is unavailable.
+
+---
+
 ## Configuration
 
 Copy `.env.example` to `.env` and edit:
